@@ -3,23 +3,15 @@ import os
 import time
 import sqlite3
 import threading
+import bcrypt  # make sure to install: pip install bcrypt
 
 DEFAULT_DB_PATH = os.path.join("data", "usb_guard.db")
-
-
-
-
-
 
 def _norm(x: str | None) -> str | None:
     if x is None:
         return None
     x = str(x).strip()
     return x.upper() if x else None
-
-
-
-
 
 
 class DB:
@@ -30,11 +22,6 @@ class DB:
         self.lock = threading.Lock()
         self._migrate()
 
-
-
-
-
-   
     def _migrate(self):
         with self.lock, self.conn:
             self.conn.executescript(
@@ -47,10 +34,6 @@ class DB:
                   serial  TEXT,
                   created_at INTEGER
                 );
-                -- keep existing unique if you had it; optional for FYP
-                -- CREATE UNIQUE INDEX IF NOT EXISTS idx_whitelist_key ON whitelist(vid, pid, serial);
-
-                -- helpful for serial-only lookups
                 CREATE INDEX IF NOT EXISTS idx_whitelist_serial ON whitelist(serial);
 
                 CREATE TABLE IF NOT EXISTS events (
@@ -66,14 +49,50 @@ class DB:
                   note     TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
+
+                CREATE TABLE IF NOT EXISTS users (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  username TEXT UNIQUE NOT NULL,
+                  password_hash BLOB NOT NULL
+                );
                 """
             )
 
+    # ---------- User / Password ops ----------
+    def add_user(self, username: str, password: str) -> bool:
+        """Add a new user. Returns False if user exists."""
+        pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
+        try:
+            with self.lock, self.conn:
+                self.conn.execute(
+                    "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+                    (username, pw_hash),
+                )
+            return True
+        except sqlite3.IntegrityError:
+            return False  # username already exists
+
+    def verify_user(self, username: str, password: str) -> bool:
+        """Verify credentials."""
+        cur = self.conn.cursor()
+        cur.execute("SELECT password_hash FROM users WHERE username=?", (username,))
+        row = cur.fetchone()
+        if not row:
+            return False
+        stored_hash = row[0]
+        return bcrypt.checkpw(password.encode(), stored_hash)
+
+    def change_password(self, username: str, new_password: str) -> bool:
+        """Change user password. Returns False if user not found."""
+        pw_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt())
+        with self.lock, self.conn:
+            cur = self.conn.execute(
+                "UPDATE users SET password_hash=? WHERE username=?",
+                (pw_hash, username),
+            )
+        return cur.rowcount > 0
+
     # ---------- Whitelist ops ----------
-
-
-   
-
     def whitelist_add(self, label: str, vid: str | None, pid: str | None, serial: str | None):
         vid = _norm(vid)
         pid = _norm(pid)
@@ -88,7 +107,6 @@ class DB:
             )
 
     def whitelist_add_serial(self, label: str, serial: str):
-        """Convenience: whitelist by serial only (vid/pid left NULL)."""
         self.whitelist_add(label=label, vid=None, pid=None, serial=serial)
 
     def whitelist_remove(self, vid: str | None, pid: str | None, serial: str | None):
@@ -106,10 +124,8 @@ class DB:
                 )
             elif serial:
                 self.conn.execute("DELETE FROM whitelist WHERE serial = ?", (serial,))
-            # else: nothing to remove
 
     def whitelist_contains(self, vid: str | None, pid: str | None, serial: str | None) -> bool:
-        """Serial-first when vid/pid are missing; else (vid,pid,serial)."""
         vid = _norm(vid)
         pid = _norm(pid)
         serial = _norm(serial)
@@ -117,11 +133,8 @@ class DB:
             if not vid or not pid:
                 if not serial:
                     return False
-                cur = self.conn.execute(
-                    "SELECT 1 FROM whitelist WHERE serial = ? LIMIT 1", (serial,)
-                )
+                cur = self.conn.execute("SELECT 1 FROM whitelist WHERE serial = ? LIMIT 1", (serial,))
                 return cur.fetchone() is not None
-            # vid & pid present -> match exact pair + serial (NULL-safe)
             cur = self.conn.execute(
                 """
                 SELECT 1
@@ -176,14 +189,18 @@ class DB:
             ORDER BY id DESC
             LIMIT ?
             """,
-            (since_minutes*60, limit),
+            (since_minutes * 60, limit),
         )
         rows = cur.fetchall()
-        # rows are tuples -> map to dicts
         return [
             {
-                "ts": r[0], "model": r[1], "pnp_id": r[2],
-                "vid": r[3], "pid": r[4], "serial": r[5], "note": r[6]
+                "ts": r[0],
+                "model": r[1],
+                "pnp_id": r[2],
+                "vid": r[3],
+                "pid": r[4],
+                "serial": r[5],
+                "note": r[6],
             }
             for r in rows
         ]

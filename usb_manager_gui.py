@@ -1,7 +1,7 @@
 # usb_manager_gui.py
 import threading
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, simpledialog
 from datetime import datetime
 import csv
 
@@ -12,11 +12,160 @@ from core.blocker import is_admin, enable_device
 
 db = DB()
 
-# background monitoring uses the same enforcement logic
+# ---------------------------
+# Background watcher
+# ---------------------------
 def watcher():
     monitor_usb_storage(lambda evt: process_event(evt, db))
 
 
+# ---------------------------
+# Auth dialogs (DB-backed)
+# ---------------------------
+def _users_count() -> int:
+    cur = db.conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM users")
+    (n,) = cur.fetchone()
+    return int(n or 0)
+
+
+class SetupDialog(simpledialog.Dialog):
+    """Shown on first run when there are no users. Creates the first admin user."""
+
+    def body(self, master):
+        self.title("Initial Setup — Create Admin User")
+
+        ttk.Label(master, text="Username:").grid(row=0, column=0, padx=6, pady=6, sticky="e")
+        ttk.Label(master, text="Password:").grid(row=1, column=0, padx=6, pady=6, sticky="e")
+        ttk.Label(master, text="Confirm Password:").grid(row=2, column=0, padx=6, pady=6, sticky="e")
+
+        self.username_var = tk.StringVar(value="admin")
+        self.pw1_var = tk.StringVar()
+        self.pw2_var = tk.StringVar()
+
+        self.e_user = ttk.Entry(master, textvariable=self.username_var)
+        self.e_pw1 = ttk.Entry(master, textvariable=self.pw1_var, show="*")
+        self.e_pw2 = ttk.Entry(master, textvariable=self.pw2_var, show="*")
+
+        self.e_user.grid(row=0, column=1, padx=6, pady=6)
+        self.e_pw1.grid(row=1, column=1, padx=6, pady=6)
+        self.e_pw2.grid(row=2, column=1, padx=6, pady=6)
+
+        return self.e_user
+
+    def validate(self):
+        u = self.username_var.get().strip()
+        p1 = self.pw1_var.get()
+        p2 = self.pw2_var.get()
+        if not u:
+            messagebox.showerror("Setup", "Username is required.")
+            return False
+        if not p1:
+            messagebox.showerror("Setup", "Password is required.")
+            return False
+        if p1 != p2:
+            messagebox.showerror("Setup", "Passwords do not match.")
+            return False
+        return True
+
+    def apply(self):
+        u = self.username_var.get().strip()
+        p1 = self.pw1_var.get()
+        ok = db.add_user(u, p1)
+        if not ok:
+            messagebox.showerror("Setup", f'User "{u}" already exists. Choose a different username.')
+            self.result = None
+        else:
+            self.result = u
+
+
+class LoginDialog(simpledialog.Dialog):
+    """Prompts for username/password and verifies against DB."""
+
+    def body(self, master):
+        self.title("Login")
+
+        ttk.Label(master, text="Username:").grid(row=0, column=0, padx=6, pady=6, sticky="e")
+        ttk.Label(master, text="Password:").grid(row=1, column=0, padx=6, pady=6, sticky="e")
+
+        self.username_var = tk.StringVar(value="admin")
+        self.password_var = tk.StringVar()
+
+        self.e_user = ttk.Entry(master, textvariable=self.username_var)
+        self.e_pw = ttk.Entry(master, textvariable=self.password_var, show="*")
+
+        self.e_user.grid(row=0, column=1, padx=6, pady=6)
+        self.e_pw.grid(row=1, column=1, padx=6, pady=6)
+
+        return self.e_user
+
+    def apply(self):
+        u = self.username_var.get().strip()
+        p = self.password_var.get()
+        if not db.verify_user(u, p):
+            messagebox.showerror("Access Denied", "Incorrect username or password.")
+            self.result = None
+        else:
+            self.result = u  # return the logged-in username
+
+
+class ChangePasswordDialog(simpledialog.Dialog):
+    """Change password for the currently logged-in user."""
+
+    def __init__(self, parent, username: str):
+        self.username = username
+        super().__init__(parent)
+
+    def body(self, master):
+        self.title(f"Change Password — {self.username}")
+
+        ttk.Label(master, text="Current Password:").grid(row=0, column=0, padx=6, pady=6, sticky="e")
+        ttk.Label(master, text="New Password:").grid(row=1, column=0, padx=6, pady=6, sticky="e")
+        ttk.Label(master, text="Confirm New Password:").grid(row=2, column=0, padx=6, pady=6, sticky="e")
+
+        self.cur_var = tk.StringVar()
+        self.n1_var = tk.StringVar()
+        self.n2_var = tk.StringVar()
+
+        self.e_cur = ttk.Entry(master, textvariable=self.cur_var, show="*")
+        self.e_n1 = ttk.Entry(master, textvariable=self.n1_var, show="*")
+        self.e_n2 = ttk.Entry(master, textvariable=self.n2_var, show="*")
+
+        self.e_cur.grid(row=0, column=1, padx=6, pady=6)
+        self.e_n1.grid(row=1, column=1, padx=6, pady=6)
+        self.e_n2.grid(row=2, column=1, padx=6, pady=6)
+
+        return self.e_cur
+
+    def validate(self):
+        cur = self.cur_var.get()
+        n1 = self.n1_var.get()
+        n2 = self.n2_var.get()
+
+        if not db.verify_user(self.username, cur):
+            messagebox.showerror("Change Password", "Current password is incorrect.")
+            return False
+        if not n1:
+            messagebox.showerror("Change Password", "New password is required.")
+            return False
+        if n1 != n2:
+            messagebox.showerror("Change Password", "New passwords do not match.")
+            return False
+        return True
+
+    def apply(self):
+        ok = db.change_password(self.username, self.n1_var.get())
+        if not ok:
+            messagebox.showerror("Change Password", "Failed to change password.")
+            self.result = None
+        else:
+            messagebox.showinfo("Change Password", "Password updated successfully.")
+            self.result = True
+
+
+# ---------------------------
+# Tabs
+# ---------------------------
 class WhitelistTab(ttk.Frame):
     def __init__(self, parent):
         super().__init__(parent)
@@ -29,9 +178,11 @@ class WhitelistTab(ttk.Frame):
         self.tree_blocked = ttk.Treeview(frame1, columns=cols_blocked, show="headings", height=10)
         for c, hdr in zip(cols_blocked, ("When", "Model", "Serial", "InstanceId", "Note")):
             self.tree_blocked.heading(c, text=hdr)
-            self.tree_blocked.column(c,
-                                     width=140 if c == "when" else 240 if c in ("model", "note") else 320,
-                                     anchor="w")
+            self.tree_blocked.column(
+                c,
+                width=140 if c == "when" else 240 if c in ("model", "note") else 320,
+                anchor="w",
+            )
         self.tree_blocked.pack(fill="both", expand=True)
 
         btns1 = ttk.Frame(frame1)
@@ -53,10 +204,8 @@ class WhitelistTab(ttk.Frame):
         ttk.Button(btns2, text="Remove from Whitelist", command=self.remove_from_whitelist).pack(side="left", padx=4)
         ttk.Button(btns2, text="Refresh", command=self.refresh).pack(side="left", padx=4)
 
-        # schedule periodic refresh
+        # periodic refresh
         self.after(2000, self._periodic_refresh)
-
-        # initial load
         self.refresh()
 
     def refresh(self):
@@ -84,19 +233,22 @@ class WhitelistTab(ttk.Frame):
             messagebox.showerror("Missing serial", "Blocked record has no serial; cannot whitelist.")
             return
 
-        # Add to whitelist by serial
         db.whitelist_add_serial(model or "Unknown", serial)
 
-        # Try to enable immediately (requires admin)
         if is_admin() and pnp_id:
             ok, msg = enable_device(pnp_id)
             if ok:
                 messagebox.showinfo("Whitelisted", f"Whitelisted & enabled:\n{model}\nS/N: {serial}")
             else:
-                messagebox.showwarning("Whitelisted", f"Whitelisted, but enable failed:\n{msg}\nYou may replug the device.")
+                messagebox.showwarning(
+                    "Whitelisted",
+                    f"Whitelisted, but enable failed:\n{msg}\nYou may replug the device.",
+                )
         else:
-            messagebox.showinfo("Whitelisted", f"Whitelisted:\n{model}\nS/N: {serial}\n(Replug if not visible.)")
-
+            messagebox.showinfo(
+                "Whitelisted",
+                f"Whitelisted:\n{model}\nS/N: {serial}\n(Replug if not visible.)",
+            )
         self.refresh()
 
     def remove_from_whitelist(self):
@@ -125,9 +277,12 @@ class LogsTab(ttk.Frame):
         filter_frame.pack(fill="x", padx=10, pady=5)
 
         ttk.Label(filter_frame, text="Decision:").pack(side="left", padx=5)
-        self.decision_filter = ttk.Combobox(filter_frame,
-                                            values=["All", "allowed", "blocked", "observe"],
-                                            state="readonly", width=12)
+        self.decision_filter = ttk.Combobox(
+            filter_frame,
+            values=["All", "allowed", "blocked", "observe"],
+            state="readonly",
+            width=12,
+        )
         self.decision_filter.current(0)
         self.decision_filter.pack(side="left")
 
@@ -147,7 +302,7 @@ class LogsTab(ttk.Frame):
             "vid": "VID",
             "pid": "PID",
             "pnp_id": "InstanceId",
-            "note": "Note"
+            "note": "Note",
         }
 
         for c in cols:
@@ -156,18 +311,14 @@ class LogsTab(ttk.Frame):
 
         self.tree.pack(fill="both", expand=True, padx=10, pady=5)
 
-        # schedule periodic refresh
+        # periodic refresh
         self.after(3000, self._periodic_refresh)
-
-        # initial load
         self.refresh()
 
     def refresh(self):
-        # Clear
         for i in self.tree.get_children():
             self.tree.delete(i)
 
-        # Decision filter
         dec_filter = self.decision_filter.get()
         query = "SELECT ts, action, decision, model, serial, vid, pid, pnp_id, note FROM events"
         params = []
@@ -190,7 +341,9 @@ class LogsTab(ttk.Frame):
             return
 
         cur = db.conn.cursor()
-        cur.execute("SELECT ts, action, decision, model, serial, vid, pid, pnp_id, note FROM events ORDER BY ts DESC")
+        cur.execute(
+            "SELECT ts, action, decision, model, serial, vid, pid, pnp_id, note FROM events ORDER BY ts DESC"
+        )
         rows = cur.fetchall()
 
         with open(file, "w", newline="", encoding="utf-8") as f:
@@ -209,10 +362,15 @@ class LogsTab(ttk.Frame):
             self.after(3000, self._periodic_refresh)
 
 
+# ---------------------------
+# Main App
+# ---------------------------
 class USBManagerApp:
-    def __init__(self, root):
+    def __init__(self, root, username: str):
         self.root = root
-        self.root.title("USB Manager — Whitelist & Logs")
+        self.username = username
+
+        self.root.title(f"USB Manager — Whitelist & Logs (Logged in as: {self.username})")
         self.root.geometry("1100x700")
 
         notebook = ttk.Notebook(root)
@@ -224,22 +382,62 @@ class USBManagerApp:
         notebook.add(self.whitelist_tab, text="Whitelist")
         notebook.add(self.logs_tab, text="Logs")
 
-        # Menu (optional): quick refresh
+        # Menu
         menubar = tk.Menu(root)
         view_menu = tk.Menu(menubar, tearoff=0)
         view_menu.add_command(label="Refresh All", command=self.refresh_all)
         menubar.add_cascade(label="View", menu=view_menu)
+
+        account_menu = tk.Menu(menubar, tearoff=0)
+        account_menu.add_command(label="Change Password", command=self.change_password)
+        menubar.add_cascade(label="Account", menu=account_menu)
+
         root.config(menu=menubar)
 
     def refresh_all(self):
         self.whitelist_tab.refresh()
         self.logs_tab.refresh()
 
+    def change_password(self):
+        dlg = ChangePasswordDialog(self.root, self.username)
+        # result handled inside dialog; nothing else required here
+
 
 if __name__ == "__main__":
+    root = tk.Tk()
+    root.withdraw()  # hide main window during auth
+
+    # First-run setup if no users exist
+    try:
+        if _users_count() == 0:
+            created = None
+            while created is None:
+                setup = SetupDialog(root)
+                created = setup.result
+                if created is None:
+                    if messagebox.askyesno("Exit", "Setup incomplete. Exit the application?"):
+                        root.destroy()
+                        raise SystemExit
+    except Exception as e:
+        messagebox.showerror("Error", f"Database initialization failed:\n{e}")
+        root.destroy()
+        raise SystemExit
+
+    # Login
+    login_user = None
+    while login_user is None:
+        dlg = LoginDialog(root)
+        login_user = dlg.result
+        if login_user is None:
+            if messagebox.askyesno("Exit", "Login cancelled or failed. Exit the application?"):
+                root.destroy()
+                raise SystemExit
+
+    # Auth OK -> show app
+    root.deiconify()
+
     # start monitor thread (daemon so app can exit normally)
     threading.Thread(target=watcher, daemon=True).start()
 
-    root = tk.Tk()
-    app = USBManagerApp(root)
+    app = USBManagerApp(root, username=login_user)
     root.mainloop()
