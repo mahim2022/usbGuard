@@ -5,6 +5,7 @@ from tkinter import ttk, messagebox, filedialog, simpledialog
 from datetime import datetime
 import csv
 
+
 from core.db import DB
 from core.usb_monitor import monitor_usb_storage
 from core.guardian import process_event
@@ -79,25 +80,93 @@ class SetupDialog(simpledialog.Dialog):
             self.result = u
 
 
+# class LoginDialog(simpledialog.Dialog):
+#     """Prompts for username/password and verifies against DB."""
+
+#     def body(self, master):
+#         self.title("Login")
+
+#         ttk.Label(master, text="Username:").grid(row=0, column=0, padx=6, pady=6, sticky="e")
+#         ttk.Label(master, text="Password:").grid(row=1, column=0, padx=6, pady=6, sticky="e")
+
+#         self.username_var = tk.StringVar(value="admin")
+#         self.password_var = tk.StringVar()
+
+#         self.e_user = ttk.Entry(master, textvariable=self.username_var)
+#         self.e_pw = ttk.Entry(master, textvariable=self.password_var, show="*")
+
+#         self.e_user.grid(row=0, column=1, padx=6, pady=6)
+#         self.e_pw.grid(row=1, column=1, padx=6, pady=6)
+
+#         return self.e_user
+
+
+# class LoginDialog(simpledialog.Dialog):
+#     """Prompts for username/password and verifies against DB."""
+
+#     def body(self, master):
+#         self.title("Login")
+
+#         # Load logo image (make sure to replace with the correct path)
+#         logo = tk.PhotoImage(file="./logo.png")  # Replace with actual logo path
+#         logo_label = ttk.Label(master, image=logo)
+#         logo_label.image = logo  # Keep a reference to the image object to prevent garbage collection
+#         logo_label.grid(row=0, columnspan=2, pady=10)
+
+#         # Username and password labels and entry fields
+#         ttk.Label(master, text="Username:").grid(row=1, column=0, padx=6, pady=6, sticky="e")
+#         ttk.Label(master, text="Password:").grid(row=2, column=0, padx=6, pady=6, sticky="e")
+
+#         self.username_var = tk.StringVar(value="admin")
+#         self.password_var = tk.StringVar()
+
+#         self.e_user = ttk.Entry(master, textvariable=self.username_var)
+#         self.e_pw = ttk.Entry(master, textvariable=self.password_var, show="*")
+
+#         self.e_user.grid(row=1, column=1, padx=6, pady=6)
+#         self.e_pw.grid(row=2, column=1, padx=6, pady=6)
+
+#         return self.e_user
+
+
 class LoginDialog(simpledialog.Dialog):
     """Prompts for username/password and verifies against DB."""
 
     def body(self, master):
         self.title("Login")
+        
+        # Set dialog background color
+        master.configure(bg="#f0f0f0")
 
-        ttk.Label(master, text="Username:").grid(row=0, column=0, padx=6, pady=6, sticky="e")
-        ttk.Label(master, text="Password:").grid(row=1, column=0, padx=6, pady=6, sticky="e")
+        # Load logo image (make sure to replace with the correct path)
+        logo = tk.PhotoImage(file="./logo.png")  # Replace with actual logo path
+        logo_label = ttk.Label(master, image=logo, background="#f0f0f0")  # Set background for logo
+        logo_label.image = logo  # Keep a reference to the image object to prevent garbage collection
+        logo_label.grid(row=0, columnspan=2, pady=(20, 10))  # Add spacing around the logo
+
+        # Username and password labels and entry fields with modern design
+        ttk.Label(master, text="Username:", background="#f0f0f0", font=("Arial", 12, "bold")).grid(row=1, column=0, padx=10, pady=6, sticky="e")
+        ttk.Label(master, text="Password:", background="#f0f0f0", font=("Arial", 12, "bold")).grid(row=2, column=0, padx=10, pady=6, sticky="e")
 
         self.username_var = tk.StringVar(value="admin")
         self.password_var = tk.StringVar()
 
-        self.e_user = ttk.Entry(master, textvariable=self.username_var)
-        self.e_pw = ttk.Entry(master, textvariable=self.password_var, show="*")
+        self.e_user = ttk.Entry(master, textvariable=self.username_var, font=("Arial", 12), width=25)
+        self.e_pw = ttk.Entry(master, textvariable=self.password_var, show="*", font=("Arial", 12), width=25)
 
-        self.e_user.grid(row=0, column=1, padx=6, pady=6)
-        self.e_pw.grid(row=1, column=1, padx=6, pady=6)
+        self.e_user.grid(row=1, column=1, padx=10, pady=6)
+        self.e_pw.grid(row=2, column=1, padx=10, pady=6)
+
+        # # Style buttons with modern appearance
+        # login_button = ttk.Button(master, text="Login", command=self.apply, width=20, style="Accent.TButton")
+        # login_button.grid(row=3, columnspan=2, pady=20)
+
+        # Add some space at the bottom
+        master.grid_rowconfigure(4, weight=1)
 
         return self.e_user
+
+
 
     def apply(self):
         u = self.username_var.get().strip()
